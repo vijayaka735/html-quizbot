@@ -48,20 +48,47 @@ def test_page(quiz_id):
         return "Test not found", 404
     return render_template("test.html", quiz=quiz, public_url=PUBLIC_URL)
 
-@app.post("/api/attempt/<quiz_id>")
+@app.route("/api/attempt/<quiz_id>", methods=["POST", "OPTIONS"])
 def submit_attempt(quiz_id):
-    quiz = get_quiz(quiz_id)
-    if not quiz:
-        return jsonify({"error": "Test not found"}), 404
     if request.method == "OPTIONS":
-        return ("", 204)
-    data = request.get_json(force=True)
-    result = save_attempt(quiz_id, data)
-    return jsonify(result)
+        response = jsonify({"ok": True})
+        response.status_code = 200
+        return response
 
-@app.route("/api/attempt/<quiz_id>", methods=["OPTIONS"])
-def submit_attempt_options(quiz_id):
-    return ("", 204)
+    quiz = get_quiz(quiz_id)
+
+    if not quiz:
+        return jsonify({
+            "error": "Test not found",
+            "quiz_id": quiz_id
+        }), 404
+
+    try:
+        data = request.get_json(silent=True)
+
+        if data is None:
+            raw = request.get_data(as_text=True)
+
+            if raw:
+                import json
+                data = json.loads(raw)
+
+        if not isinstance(data, dict):
+            return jsonify({
+                "error": "Invalid submission data"
+            }), 400
+
+        result = save_attempt(quiz_id, data)
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        log.exception("Attempt save failed")
+
+        return jsonify({
+            "error": "Failed to save result",
+            "details": str(e)
+        }), 500
 
 @app.get("/api/leaderboard/<quiz_id>")
 def leaderboard_api(quiz_id):
