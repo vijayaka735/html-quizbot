@@ -143,35 +143,58 @@ function calculateLocalResult(){
  const score=correct-(wrong*Number(quiz.negative||0));
  return {score:Number(score.toFixed(2)),correct,wrong,unattempted,percentage:quiz.questions.length?Number((Math.max(0,score)/quiz.questions.length*100).toFixed(2)):0};
 }
-async function submitTest(auto){
- if(resultData)return;
- clearInterval(tick);
- const payload=getPayload();
- try{
-   const r=await fetch(API_BASE+'/api/attempt/'+quiz.id,{
-     method:'POST',
-     headers:{'Content-Type':'application/json'},
-     body:JSON.stringify(payload),
-     keepalive:true
-   });
-   if(!r.ok)throw new Error('HTTP '+r.status);
-   resultData=await r.json();
-   showResult(resultData);
- }catch(e){
-   /* Telegram/local HTML viewers can block reading a cross-origin fetch response.
-      Send a simple POST in the background, then show the same result locally. */
-   try{
-     const blob=new Blob([JSON.stringify(payload)],{type:'text/plain'});
-     const queued=navigator.sendBeacon(API_BASE+'/api/attempt/'+quiz.id,blob);
-     if(queued){
-       resultData=calculateLocalResult();
-       showResult(resultData);
-       return;
-     }
-   }catch(ignore){}
-   if(!auto)remaining=Math.max(1,remaining);
-   alert('❌ Result save नहीं हो पाया। Internet connection check करें और फिर Submit करें।');
- }
+async function submitTest(auto=false){
+  if(resultData) return;
+
+  clearInterval(tick);
+
+  const payload = getPayload();
+
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/attempt/${quiz.id}`,
+      {
+        method: "POST",
+        mode: "cors",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload),
+        keepalive: true
+      }
+    );
+
+    if(!response.ok){
+      throw new Error("HTTP " + response.status);
+    }
+
+    resultData = await response.json();
+    showResult(resultData);
+
+  } catch(e) {
+
+    // Telegram/local HTML viewer fallback
+    try {
+      const form = document.createElement("form");
+      form.method = "POST";
+      form.action = `${API_BASE}/api/attempt/${quiz.id}`;
+      form.target = "_blank";
+      form.style.display = "none";
+
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = "payload";
+      input.value = JSON.stringify(payload);
+
+      form.appendChild(input);
+      document.body.appendChild(form);
+      form.submit();
+
+    } catch(err) {
+      alert("❌ Result save नहीं हो पाया। कृपया Internet connection check करें और फिर Submit करें।");
+    }
+  }
+}
 }
 function applyTheme(theme){
  document.body.classList.toggle('dark',theme==='dark');
