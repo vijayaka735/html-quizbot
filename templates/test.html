@@ -111,6 +111,21 @@ const API_BASE={{ public_url|tojson }};
 let current=0,answers=Array(quiz.questions.length).fill(null),marked=Array(quiz.questions.length).fill(false),remaining=quiz.minutes*60,started=0,tick=null,resultData=null;
 const $=id=>document.getElementById(id);
 function fmt(s){s=Math.max(0,s);return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
+function tick(){
+  clearInterval(tick);
+  const endTime = started + (quiz.minutes * 60 * 1000);
+  const updateTimer = () => {
+    remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+    $('timer').textContent = fmt(remaining);
+    if(remaining <= 0){
+      clearInterval(tick);
+      tick = null;
+      submitTest(true);
+    }
+  };
+  updateTimer();
+  tick = setInterval(updateTimer, 250);
+}
 function begin(){
   const reg = {
     name: $('name').value.trim(),
