@@ -112,11 +112,28 @@ let current=0,answers=Array(quiz.questions.length).fill(null),marked=Array(quiz.
 const $=id=>document.getElementById(id);
 function fmt(s){s=Math.max(0,s);return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
 function begin(){
- const reg={name:$('name').value.trim(),mobile:$('mobile').value.trim(),email:$('email').value.trim(),gender:$('gender').value,category:$('category').value};
- if(!reg.name||!reg.mobile||!$('agree').checked){$('regError').textContent='❌ Name, Mobile और Declaration जरूरी है।';return}
- window.reg=reg;$('registration').classList.add('hidden');$('exam').classList.remove('hidden');started=Date.now();$('timer').textContent=fmt(remaining);render();tick=setInterval(clock,1000)
+  const reg = {
+    name: $('name').value.trim(),
+    mobile: $('mobile').value.trim(),
+    email: $('email').value.trim(),
+    gender: $('gender').value,
+    category: $('category').value,
+    agree: $('agree').checked
+  };
+
+  if(!reg.name || !reg.mobile || !reg.agree){
+    $('regError').textContent = '❌ Name, Mobile और Declaration भरना जरूरी है।';
+    return;
+  }
+
+  window.reg = reg;
+  $('registration').classList.add('hidden');
+  $('exam').classList.remove('hidden');
+
+  started = Date.now();
+  render();
+  tick();
 }
-function clock(){remaining--; $('timer').textContent=fmt(remaining);if(remaining<=0){clearInterval(tick);submitTest(true)}}
 function render(){const q=quiz.questions[current];$('qno').textContent=current+1;$('tagno').textContent=current+1;$('question').textContent=q.question;$('attempted').textContent=answers.filter(x=>x!==null).length;$('bar').style.width=((current+1)/quiz.questions.length*100)+'%';$('reviewTag').classList.toggle('hidden',!marked[current]);$('options').innerHTML=q.options.map((o,i)=>`<button class="option ${answers[current]===i?'selected':''}" onclick="choose(${i})"><span class="opt-letter">${String.fromCharCode(65+i)}</span><span>${escapeHtml(o)}</span></button>`).join('');updateCounts()}
 function escapeHtml(s){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
 function choose(i){answers[current]=i;render()}
