@@ -108,24 +108,9 @@ body.dark .error{color:#ff8f9d}
 <script>
 const quiz={{ quiz|tojson }};
 const API_BASE={{ public_url|tojson }};
-let current=0,answers=Array(quiz.questions.length).fill(null),marked=Array(quiz.questions.length).fill(false),remaining=quiz.minutes*60,started=0,tick=null,resultData=null;
+let current=0,answers=Array(quiz.questions.length).fill(null),marked=Array(quiz.questions.length).fill(false),remaining=quiz.minutes*60,started=0,timerInterval=null,resultData=null;
 const $=id=>document.getElementById(id);
 function fmt(s){s=Math.max(0,s);return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
-function tick(){
-  clearInterval(tick);
-  const endTime = started + (quiz.minutes * 60 * 1000);
-  const updateTimer = () => {
-    remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
-    $('timer').textContent = fmt(remaining);
-    if(remaining <= 0){
-      clearInterval(tick);
-      tick = null;
-      submitTest(true);
-    }
-  };
-  updateTimer();
-  tick = setInterval(updateTimer, 250);
-}
 function begin(){
   const reg = {
     name: $('name').value.trim(),
@@ -147,7 +132,24 @@ function begin(){
 
   started = Date.now();
   render();
-  tick();
+  startTimer();
+}
+function startTimer(){
+  if(timerInterval) clearInterval(timerInterval);
+  const endTime = Date.now() + (quiz.minutes * 60 * 1000);
+  remaining = quiz.minutes * 60;
+  $('timer').textContent = fmt(remaining);
+
+  timerInterval = setInterval(()=>{
+    remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+    $('timer').textContent = fmt(remaining);
+
+    if(remaining <= 0){
+      clearInterval(timerInterval);
+      timerInterval = null;
+      submitTest(true);
+    }
+  }, 250);
 }
 function render(){const q=quiz.questions[current];$('qno').textContent=current+1;$('tagno').textContent=current+1;$('question').textContent=q.question;$('attempted').textContent=answers.filter(x=>x!==null).length;$('bar').style.width=((current+1)/quiz.questions.length*100)+'%';$('reviewTag').classList.toggle('hidden',!marked[current]);$('options').innerHTML=q.options.map((o,i)=>`<button class="option ${answers[current]===i?'selected':''}" onclick="choose(${i})"><span class="opt-letter">${String.fromCharCode(65+i)}</span><span>${escapeHtml(o)}</span></button>`).join('');updateCounts()}
 function escapeHtml(s){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
@@ -178,7 +180,7 @@ function calculateLocalResult(){
 async function submitTest(auto=false){
   if(resultData) return;
 
-  clearInterval(tick);
+  if(timerInterval){clearInterval(timerInterval);timerInterval=null;}
 
   const payload = getPayload();
 
