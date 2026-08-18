@@ -644,10 +644,10 @@ async def handle_text(
             f"🎯 Mode: {vals['mode']}\n\n"
             f"🔗 Test:\n{link}\n\n"
             "Owner commands:\n\n"
-            f"<pre><code>/settime {quiz_id} 30</code></pre>"
-            f"<pre><code>/setnegative {quiz_id} 0.25</code></pre>"
-            f"<pre><code>/leaderboard {quiz_id}</code></pre>"
-            f"<pre><code>/html {quiz_id}</code></pre>",
+            f"/settime {quiz_id} 30\n"
+f"/setnegative {quiz_id} 0.25\n"
+f"/leaderboard {quiz_id}\n"
+f"/html {quiz_id}",
             parse_mode=ParseMode.HTML,
         )
 
