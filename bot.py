@@ -888,8 +888,8 @@ async def html_cmd(
             f"⏱️ Time: {q['minutes']} minutes\n"
             f"❌ Negative: {q['negative']}\n"
             f"🎯 Mode: {q['mode']}\n\n"
-            "📥 नीचे actual HTML file है। "
-            "Download करके Chrome में खोल सकते हैं।"
+            "📥 नीचे TEST HTML file है। "
+            "Download करके Chrome में Open करके Test दें सकते हैं।"
         )
 
         try:
@@ -964,7 +964,8 @@ async def pdf_cmd(
             f"🆔 Test ID: {q['id']}\n"
             f"📚 Questions: {len(q['questions'])}\n"
             f"📘 Test: {q['title']}\n\n"
-            "🇮🇳 Hindi-focused PDF • सभी प्रश्न • विकल्प • व्याख्या • Page Number"
+            "🇮🇳  Dream big, work hard, stay focused\n"
+    "CLICK HERE ➢ @AIpha_World"
         )
 
         with open(file_path, "rb") as fh:
