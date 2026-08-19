@@ -3,8 +3,10 @@ import re
 import tempfile
 import unicodedata
 from pathlib import Path
+from functools import lru_cache
 
 from PIL import Image, ImageDraw, ImageFont
+
 
 GROUP_NAME = "QUICK STUDY GROUP"
 PAGE_W, PAGE_H = 1240, 1754
@@ -27,267 +29,936 @@ if not DEV_BOLD.exists():
     DEV_BOLD = DEV_REG
 
 
+# ---------------------------------------------------------------------------
+# FONT CACHE
+# Loading a TTF file repeatedly is expensive. Keep every requested font
+# object in memory for the lifetime of this process.
+# ---------------------------------------------------------------------------
+@lru_cache(maxsize=64)
 def _font(size, bold=False, devanagari=True):
     path = DEV_BOLD if bold else DEV_REG
+
     if not devanagari:
         path = LAT_BOLD if bold else LAT_REG
+
     layout = getattr(ImageFont, "Layout", None)
     engine = layout.RAQM if layout and hasattr(layout, "RAQM") else None
+
     kwargs = {"size": size}
+
     if engine is not None:
         kwargs["layout_engine"] = engine
+
     return ImageFont.truetype(str(path), **kwargs)
 
 
-def _has_deva(s):
-    return bool(re.search(r"[\u0900-\u097F]", s or ""))
+@lru_cache(maxsize=8192)
+def _has_deva(text):
+    return bool(re.search(r"[\u0900-\u097F]", text or ""))
 
 
+@lru_cache(maxsize=8192)
 def _pick_font(size, bold, text):
-    return _font(size, bold, devanagari=_has_deva(text))
+    return _font(size, bold, _has_deva(text))
 
 
-def _clean_text(text, keep_latin=False):
+@lru_cache(maxsize=8192)
+def _clean_text_cached(text, keep_latin=False):
     text = unicodedata.normalize("NFC", str(text or ""))
+
     lines = []
+
     paren_en = re.compile(r"\s*\([^()]*[A-Za-z][^()]*\)")
+
     for raw in text.splitlines():
         line = raw.strip()
+
         if not line:
             if lines and lines[-1] != "":
                 lines.append("")
             continue
+
         if "|" in line:
             lines.append(line)
             continue
+
         if _has_deva(line):
             line = paren_en.sub("", line)
-            line = re.sub(r"\b(Assertion|Reason|Statement|Solution|Question|True|False)\b\s*[:：-]?", "", line, flags=re.I)
+
+            line = re.sub(
+                r"\b(Assertion|Reason|Statement|Solution|Question|True|False)\b\s*[:：-]?",
+                "",
+                line,
+                flags=re.I,
+            )
+
             line = re.sub(r"\s{2,}", " ", line).strip()
+
             lines.append(line)
-        elif keep_latin and re.fullmatch(r"[A-Za-z0-9\s.,%+\-×÷=<>≤≥→()\[\]{}$:/]+", line):
+
+        elif keep_latin and re.fullmatch(
+            r"[A-Za-z0-9\s.,%+\-×÷=<>≤≥→()\[\]{}$:/]+",
+            line,
+        ):
             lines.append(line)
+
         elif not re.search(r"[A-Za-z]", line):
             lines.append(line)
+
     while lines and not lines[-1]:
         lines.pop()
+
     return "\n".join(lines)
+
+
+def _clean_text(text, keep_latin=False):
+    return _clean_text_cached(str(text or ""), keep_latin)
 
 
 def _hindi_text(text):
     return _clean_text(text, keep_latin=False)
 
 
+@lru_cache(maxsize=8192)
+def _table_cell_cached(text):
+    return _clean_text_cached(
+        str(text or ""),
+        True,
+    ).replace("\n", " ").strip()
+
+
 def _table_cell(text):
-    # Tables often contain compact values such as "1. 75 dB". Keep those,
-    # while still removing English duplicates when Hindi is present.
-    return _clean_text(text, keep_latin=True).replace("\n", " ").strip()
+    return _table_cell_cached(str(text or ""))
+
+
+@lru_cache(maxsize=8192)
+def _token_parts(text):
+    return tuple(
+        re.findall(
+            r"[\u0900-\u097F]+|[A-Za-z]+|\d+(?:\.\d+)?|\s+|[^\u0900-\u097FA-Za-z0-9\s]",
+            str(text),
+        )
+    )
 
 
 def _token_font_size(text, size, bold=False):
     return _pick_font(size, bold, text)
 
 
-def _measure_mixed(draw, text, size, bold=False):
-    total = 0
-    parts = re.findall(r"[\u0900-\u097F]+|[A-Za-z]+|\d+(?:\.\d+)?|\s+|[^\u0900-\u097FA-Za-z0-9\s]", str(text))
-    for part in parts:
-        f = _token_font_size(part, size, bold)
-        total += draw.textlength(part, font=f)
+# ---------------------------------------------------------------------------
+# SHARED MEASUREMENT CANVAS
+# ---------------------------------------------------------------------------
+_MEASURE_IMAGE = Image.new(
+    "RGB",
+    (1, 1),
+    "white",
+)
+
+_MEASURE_DRAW = ImageDraw.Draw(_MEASURE_IMAGE)
+
+
+# ---------------------------------------------------------------------------
+# TOKEN WIDTH CACHE
+# ---------------------------------------------------------------------------
+@lru_cache(maxsize=32768)
+def _token_width(part, size, bold=False):
+    f = _token_font_size(
+        part,
+        size,
+        bold,
+    )
+
+    return _MEASURE_DRAW.textlength(
+        part,
+        font=f,
+    )
+
+
+# ---------------------------------------------------------------------------
+# COMPLETE TEXT WIDTH CACHE
+# ---------------------------------------------------------------------------
+@lru_cache(maxsize=32768)
+def _measure_mixed_cached(text, size, bold=False):
+    total = 0.0
+
+    for part in _token_parts(str(text)):
+        total += _token_width(
+            part,
+            size,
+            bold,
+        )
+
     return total
 
 
-def _draw_mixed(draw, xy, text, size, fill, bold=False):
-    x, y = xy
-    parts = re.findall(r"[\u0900-\u097F]+|[A-Za-z]+|\d+(?:\.\d+)?|\s+|[^\u0900-\u097FA-Za-z0-9\s]", str(text))
-    for part in parts:
-        f = _token_font_size(part, size, bold)
-        draw.text((x, y), part, font=f, fill=fill)
-        x += draw.textlength(part, font=f)
-    return x
+def _measure_mixed(draw, text, size, bold=False):
+    # draw kept in signature for compatibility
+    return _measure_mixed_cached(
+        str(text),
+        size,
+        bold,
+    )
 
 
-def _wrap_mixed(draw, text, size, max_width, bold=False):
+# ---------------------------------------------------------------------------
+# WRAP CACHE
+# ---------------------------------------------------------------------------
+@lru_cache(maxsize=16384)
+def _wrap_mixed_cached(
+    text,
+    size,
+    max_width,
+    bold=False,
+):
     result = []
-    for paragraph in unicodedata.normalize("NFC", str(text or "")).split("\n"):
+
+    for paragraph in unicodedata.normalize(
+        "NFC",
+        str(text or ""),
+    ).split("\n"):
+
         if not paragraph:
             result.append("")
             continue
+
         words = paragraph.split()
+
         if not words:
             result.append("")
             continue
+
         current = words[0]
+
         for word in words[1:]:
             trial = current + " " + word
-            if _measure_mixed(draw, trial, size, bold) <= max_width:
+
+            if _measure_mixed_cached(
+                trial,
+                size,
+                bold,
+            ) <= max_width:
                 current = trial
             else:
                 result.append(current)
                 current = word
+
         result.append(current)
-    return result
+
+    return tuple(result)
+
+
+def _wrap_mixed(
+    draw,
+    text,
+    size,
+    max_width,
+    bold=False,
+):
+    return list(
+        _wrap_mixed_cached(
+            str(text or ""),
+            size,
+            max_width,
+            bold,
+        )
+    )
 
 
 def _line_height(size):
     return int(size * 1.42)
 
 
-def _parse_table(text):
+# ---------------------------------------------------------------------------
+# TABLE PARSER CACHE
+# ---------------------------------------------------------------------------
+@lru_cache(maxsize=4096)
+def _parse_table_cached(text):
     rows = []
+
     for line in str(text or "").splitlines():
         line = line.strip()
+
         if "|" not in line:
             continue
-        if re.fullmatch(r"\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?", line):
+
+        if re.fullmatch(
+            r"\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?",
+            line,
+        ):
             continue
-        cells = [_table_cell(c) for c in line.strip("|").split("|")]
+
+        cells = [
+            _table_cell(c)
+            for c in line.strip("|").split("|")
+        ]
+
         if len(cells) >= 2:
-            rows.append(cells)
-    return rows if len(rows) >= 2 else None
+            rows.append(tuple(cells))
+
+    return tuple(rows) if len(rows) >= 2 else None
 
 
-def _draw_table(draw, x, y, rows, width):
-    cols = max(len(r) for r in rows)
-    rows = [r + [""] * (cols - len(r)) for r in rows]
-    col_w = width / cols
-    regular_size = 17
-    bold_size = 17
-    pad = 9
-    heights = []
-    for ri, row in enumerate(rows):
-        size = bold_size if ri == 0 else regular_size
-        max_lines = 1
-        for cell in row:
-            max_lines = max(max_lines, len(_wrap_mixed(draw, cell, size, col_w - 2 * pad, ri == 0)))
-        heights.append(max(42, max_lines * _line_height(size) + 2 * pad))
-    yy = y
-    for ri, row in enumerate(rows):
-        hh = heights[ri]
-        for ci, cell in enumerate(row):
-            xx = x + ci * col_w
-            fill = "#EAF3EA" if ri == 0 else "#FFFFFF"
-            draw.rectangle((xx, yy, xx + col_w, yy + hh), fill=fill, outline="#666666", width=2)
-            size = bold_size if ri == 0 else regular_size
-            lines = _wrap_mixed(draw, cell, size, col_w - 2 * pad, ri == 0)
-            ty = yy + pad
-            for line in lines:
-                _draw_mixed(draw, (xx + pad, ty), line, size, "#202020", ri == 0)
-                ty += _line_height(size)
-        yy += hh
-    return yy
+def _parse_table(text):
+    rows = _parse_table_cached(
+        str(text or "")
+    )
+
+    if not rows:
+        return None
+
+    return [list(row) for row in rows]
 
 
-def _question_height(draw, q, width):
+# ---------------------------------------------------------------------------
+# QUESTION HEIGHT CACHE
+# ---------------------------------------------------------------------------
+@lru_cache(maxsize=8192)
+def _question_height_cached(
+    question_text,
+    options_tuple,
+    explanation,
+    width,
+):
     qsize, osize, esize = 20, 18, 16
-    text = str(q.get("question", ""))
-    table = _parse_table(text)
-    non_table = "\n".join(line for line in text.splitlines() if "|" not in line) if table else text
-    h = len(_wrap_mixed(draw, _hindi_text(non_table), qsize, width, True)) * _line_height(qsize) + 10
+
+    text = str(question_text or "")
+
+    table = _parse_table_cached(text)
+
     if table:
-        # Conservative estimate; the actual table renderer will determine height.
+        non_table = "\n".join(
+            line
+            for line in text.splitlines()
+            if "|" not in line
+        )
+    else:
+        non_table = text
+
+    cleaned_question = _clean_text_cached(
+        non_table,
+        False,
+    )
+
+    h = (
+        len(
+            _wrap_mixed_cached(
+                cleaned_question,
+                qsize,
+                width,
+                True,
+            )
+        )
+        * _line_height(qsize)
+        + 10
+    )
+
+    if table:
         h += 46 * len(table) + 12
-    for option in q.get("options", []):
-        h += len(_wrap_mixed(draw, _hindi_text(option), osize, width - 12)) * _line_height(osize) + 5
-    exp = _hindi_text(q.get("explanation", ""))
+
+    for option in options_tuple:
+        cleaned_option = _clean_text_cached(
+            str(option or ""),
+            False,
+        )
+
+        h += (
+            len(
+                _wrap_mixed_cached(
+                    cleaned_option,
+                    osize,
+                    width - 12,
+                    False,
+                )
+            )
+            * _line_height(osize)
+            + 5
+        )
+
+    exp = _clean_text_cached(
+        str(explanation or ""),
+        False,
+    )
+
     if exp:
-        h += 30 + len(_wrap_mixed(draw, "व्याख्या: " + exp, esize, width - 30)) * _line_height(esize) + 14
+        h += (
+            30
+            + len(
+                _wrap_mixed_cached(
+                    "व्याख्या: " + exp,
+                    esize,
+                    width - 30,
+                    False,
+                )
+            )
+            * _line_height(esize)
+            + 14
+        )
+
     return h + 20
 
 
-def _draw_question(draw, x, y, number, q, width):
+def _question_height(draw, q, width):
+    options = tuple(
+        str(x or "")
+        for x in (q.get("options") or [])
+    )
+
+    return _question_height_cached(
+        str(q.get("question", "")),
+        options,
+        str(q.get("explanation", "") or ""),
+        width,
+    )
+
+
+# ---------------------------------------------------------------------------
+# TABLE DRAWING
+# ---------------------------------------------------------------------------
+def _draw_table(
+    draw,
+    x,
+    y,
+    rows,
+    width,
+):
+    cols = max(
+        len(r)
+        for r in rows
+    )
+
+    rows = [
+        r + [""] * (cols - len(r))
+        for r in rows
+    ]
+
+    col_w = width / cols
+
+    regular_size = 17
+    bold_size = 17
+    pad = 9
+
+    heights = []
+
+    for ri, row in enumerate(rows):
+        size = (
+            bold_size
+            if ri == 0
+            else regular_size
+        )
+
+        max_lines = 1
+
+        for cell in row:
+            max_lines = max(
+                max_lines,
+                len(
+                    _wrap_mixed(
+                        draw,
+                        cell,
+                        size,
+                        col_w - 2 * pad,
+                        ri == 0,
+                    )
+                ),
+            )
+
+        heights.append(
+            max(
+                42,
+                max_lines
+                * _line_height(size)
+                + 2 * pad,
+            )
+        )
+
+    yy = y
+
+    for ri, row in enumerate(rows):
+        hh = heights[ri]
+
+        for ci, cell in enumerate(row):
+            xx = x + ci * col_w
+
+            fill = (
+                "#EAF3EA"
+                if ri == 0
+                else "#FFFFFF"
+            )
+
+            draw.rectangle(
+                (
+                    xx,
+                    yy,
+                    xx + col_w,
+                    yy + hh,
+                ),
+                fill=fill,
+                outline="#666666",
+                width=2,
+            )
+
+            size = (
+                bold_size
+                if ri == 0
+                else regular_size
+            )
+
+            lines = _wrap_mixed(
+                draw,
+                cell,
+                size,
+                col_w - 2 * pad,
+                ri == 0,
+            )
+
+            ty = yy + pad
+
+            for line in lines:
+                _draw_mixed(
+                    draw,
+                    (xx + pad, ty),
+                    line,
+                    size,
+                    "#202020",
+                    ri == 0,
+                )
+
+                ty += _line_height(size)
+
+        yy += hh
+
+    return yy
+
+
+# ---------------------------------------------------------------------------
+# MIXED TEXT DRAWING
+# ---------------------------------------------------------------------------
+def _draw_mixed(
+    draw,
+    xy,
+    text,
+    size,
+    fill,
+    bold=False,
+):
+    x, y = xy
+
+    for part in _token_parts(str(text)):
+        f = _token_font_size(
+            part,
+            size,
+            bold,
+        )
+
+        draw.text(
+            (x, y),
+            part,
+            font=f,
+            fill=fill,
+        )
+
+        x += _token_width(
+            part,
+            size,
+            bold,
+        )
+
+    return x
+
+
+# ---------------------------------------------------------------------------
+# QUESTION DRAWING
+# ---------------------------------------------------------------------------
+def _draw_question(
+    draw,
+    x,
+    y,
+    number,
+    q,
+    width,
+):
     qsize, osize, esize = 20, 18, 16
+
     dark = "#202020"
-    text = str(q.get("question", ""))
-    table = _parse_table(text)
-    non_table = "\n".join(line for line in text.splitlines() if "|" not in line) if table else text
-    qtext = _hindi_text(non_table)
-    lines = _wrap_mixed(draw, f"{number}. {qtext}", qsize, width, True)
+
+    text = str(
+        q.get("question", "")
+    )
+
+    table = _parse_table_cached(text)
+
+    if table:
+        non_table = "\n".join(
+            line
+            for line in text.splitlines()
+            if "|" not in line
+        )
+    else:
+        non_table = text
+
+    qtext = _clean_text_cached(
+        non_table,
+        False,
+    )
+
+    lines = _wrap_mixed_cached(
+        f"{number}. {qtext}",
+        qsize,
+        width,
+        True,
+    )
+
     for line in lines:
-        _draw_mixed(draw, (x, y), line, qsize, dark, True)
+        _draw_mixed(
+            draw,
+            (x, y),
+            line,
+            qsize,
+            dark,
+            True,
+        )
+
         y += _line_height(qsize)
+
     y += 4
 
     if table:
-        y = _draw_table(draw, x, y, table, width) + 12
+        y = _draw_table(
+            draw,
+            x,
+            y,
+            [list(row) for row in table],
+            width,
+        ) + 12
 
-    labels = ["(क)", "(ख)", "(ग)", "(घ)"]
-    for idx, option in enumerate(q.get("options", [])):
-        op = _hindi_text(option)
+    labels = [
+        "(क)",
+        "(ख)",
+        "(ग)",
+        "(घ)",
+    ]
+
+    for idx, option in enumerate(
+        q.get("options", []) or []
+    ):
+        op = _clean_text_cached(
+            str(option or ""),
+            False,
+        )
+
         if not op:
             continue
-        label = labels[idx] if idx < 4 else f"({idx + 1})"
-        for line in _wrap_mixed(draw, f"{label} {op}", osize, width - 10):
-            _draw_mixed(draw, (x + 7, y), line, osize, dark)
+
+        label = (
+            labels[idx]
+            if idx < 4
+            else f"({idx + 1})"
+        )
+
+        lines = _wrap_mixed_cached(
+            f"{label} {op}",
+            osize,
+            width - 10,
+            False,
+        )
+
+        for line in lines:
+            _draw_mixed(
+                draw,
+                (x + 7, y),
+                line,
+                osize,
+                dark,
+            )
+
             y += _line_height(osize)
+
         y += 3
 
-    exp = _hindi_text(q.get("explanation", ""))
+    exp = _clean_text_cached(
+        str(q.get("explanation", "") or ""),
+        False,
+    )
+
     if exp:
         box_text = "व्याख्या: " + exp
-        lines = _wrap_mixed(draw, box_text, esize, width - 32)
-        box_h = max(55, len(lines) * _line_height(esize) + 20)
-        draw.rounded_rectangle((x, y, x + width, y + box_h), radius=6, fill="#E8F5E9", outline="#43A047", width=2)
+
+        lines = _wrap_mixed_cached(
+            box_text,
+            esize,
+            width - 32,
+            False,
+        )
+
+        box_h = max(
+            55,
+            len(lines)
+            * _line_height(esize)
+            + 20,
+        )
+
+        draw.rounded_rectangle(
+            (
+                x,
+                y,
+                x + width,
+                y + box_h,
+            ),
+            radius=6,
+            fill="#E8F5E9",
+            outline="#43A047",
+            width=2,
+        )
+
         ty = y + 9
+
         for line in lines:
-            _draw_mixed(draw, (x + 13, ty), line, esize, "#1B5E20")
+            _draw_mixed(
+                draw,
+                (x + 13, ty),
+                line,
+                esize,
+                "#1B5E20",
+            )
+
             ty += _line_height(esize)
+
         y += box_h + 11
+
     return y + 7
 
 
-def _new_page(title, heading, page_no):
-    im = Image.new("RGB", (PAGE_W, PAGE_H), "white")
+# ---------------------------------------------------------------------------
+# NEW PAGE
+# ---------------------------------------------------------------------------
+def _new_page(
+    title,
+    heading,
+    page_no,
+):
+    im = Image.new(
+        "RGB",
+        (PAGE_W, PAGE_H),
+        "white",
+    )
+
     d = ImageDraw.Draw(im)
-    _draw_mixed(d, (MARGIN_X, 34), GROUP_NAME, 22, "#7D1524", True)
-    _draw_mixed(d, (PAGE_W - MARGIN_X - 92, 38), "अभ्यास हेतु", 15, "#555555")
-    d.line((MARGIN_X, 80, PAGE_W - MARGIN_X, 80), fill="#8B1E2D", width=2)
+
+    _draw_mixed(
+        d,
+        (MARGIN_X, 34),
+        GROUP_NAME,
+        22,
+        "#7D1524",
+        True,
+    )
+
+    _draw_mixed(
+        d,
+        (
+            PAGE_W - MARGIN_X - 92,
+            38,
+        ),
+        "अभ्यास हेतु",
+        15,
+        "#555555",
+    )
+
+    d.line(
+        (
+            MARGIN_X,
+            80,
+            PAGE_W - MARGIN_X,
+            80,
+        ),
+        fill="#8B1E2D",
+        width=2,
+    )
+
     if page_no == 1:
-        _draw_mixed(d, (PAGE_W // 2, 115), GROUP_NAME, 29, "#7D1524", True)
-        _draw_mixed(d, (PAGE_W // 2, 160), _hindi_text(heading) or "", 18, "#333333")
-        _draw_mixed(d, (PAGE_W // 2, 187), _hindi_text(title) or "अभ्यास प्रश्नपत्र", 18, "#333333")
+        _draw_mixed(
+            d,
+            (PAGE_W // 2, 115),
+            GROUP_NAME,
+            29,
+            "#7D1524",
+            True,
+        )
+
+        _draw_mixed(
+            d,
+            (PAGE_W // 2, 160),
+            _hindi_text(heading) or "",
+            18,
+            "#333333",
+        )
+
+        _draw_mixed(
+            d,
+            (PAGE_W // 2, 187),
+            _hindi_text(title)
+            or "अभ्यास प्रश्नपत्र",
+            18,
+            "#333333",
+        )
+
         return im, TOP_Y + 110
+
     return im, TOP_Y
 
 
+# ---------------------------------------------------------------------------
+# MAIN PDF GENERATOR
+# ---------------------------------------------------------------------------
 def generate_quiz_pdf(quiz):
     """Generate Hindi PDF with correct Devanagari shaping, real tables and green explanations."""
-    title = quiz.get("title", "अभ्यास प्रश्नपत्र")
-    heading = quiz.get("heading", "")
-    questions = quiz.get("questions") or []
+
+    title = quiz.get(
+        "title",
+        "अभ्यास प्रश्नपत्र",
+    )
+
+    heading = quiz.get(
+        "heading",
+        "",
+    )
+
+    questions = quiz.get(
+        "questions"
+    ) or []
+
+    if not questions:
+        raise ValueError(
+            "No questions available for PDF generation."
+        )
 
     pages = []
+
     page_no = 1
-    page, y = _new_page(title, heading, page_no)
+
+    page, y = _new_page(
+        title,
+        heading,
+        page_no,
+    )
+
     draw = ImageDraw.Draw(page)
-    x_positions = [MARGIN_X, MARGIN_X + COLUMN_W + COLUMN_GAP]
+
+    x_positions = [
+        MARGIN_X,
+        MARGIN_X
+        + COLUMN_W
+        + COLUMN_GAP,
+    ]
+
     col = 0
+
     first_page_start = y
 
-    for i, q in enumerate(questions, 1):
-        needed = _question_height(draw, q, COLUMN_W)
+    for i, q in enumerate(
+        questions,
+        1,
+    ):
+        needed = _question_height(
+            draw,
+            q,
+            COLUMN_W,
+        )
+
         if y + needed > PAGE_H - BOTTOM_Y:
+
             if col == 0:
                 col = 1
-                y = first_page_start if page_no == 1 else TOP_Y
+
+                y = (
+                    first_page_start
+                    if page_no == 1
+                    else TOP_Y
+                )
+
             else:
                 pages.append(page)
+
                 page_no += 1
-                page, y = _new_page(title, heading, page_no)
+
+                page, y = _new_page(
+                    title,
+                    heading,
+                    page_no,
+                )
+
                 draw = ImageDraw.Draw(page)
+
                 col = 0
+
         x = x_positions[col]
-        y = _draw_question(draw, x, y, i, q, COLUMN_W)
+
+        y = _draw_question(
+            draw,
+            x,
+            y,
+            i,
+            q,
+            COLUMN_W,
+        )
 
     pages.append(page)
-    total = len(pages)
-    for idx, im in enumerate(pages, 1):
-        d = ImageDraw.Draw(im)
-        d.line((MARGIN_X, PAGE_H - 55, PAGE_W - MARGIN_X, PAGE_H - 55), fill="#BDBDBD", width=1)
-        _draw_mixed(d, (MARGIN_X, PAGE_H - 43), GROUP_NAME, 12, "#666666")
-        _draw_mixed(d, (PAGE_W - MARGIN_X - 80, PAGE_H - 43), f"पृष्ठ {idx} / {total}", 12, "#666666")
 
-    fd, path = tempfile.mkstemp(prefix="qsg_", suffix=".pdf")
+    total = len(pages)
+
+    for idx, im in enumerate(
+        pages,
+        1,
+    ):
+        d = ImageDraw.Draw(im)
+
+        d.line(
+            (
+                MARGIN_X,
+                PAGE_H - 55,
+                PAGE_W - MARGIN_X,
+                PAGE_H - 55,
+            ),
+            fill="#BDBDBD",
+            width=1,
+        )
+
+        _draw_mixed(
+            d,
+            (
+                MARGIN_X,
+                PAGE_H - 43,
+            ),
+            GROUP_NAME,
+            12,
+            "#666666",
+        )
+
+        _draw_mixed(
+            d,
+            (
+                PAGE_W - MARGIN_X - 80,
+                PAGE_H - 43,
+            ),
+            f"पृष्ठ {idx} / {total}",
+            12,
+            "#666666",
+        )
+
+    fd, path = tempfile.mkstemp(
+        prefix="qsg_",
+        suffix=".pdf",
+    )
+
     os.close(fd)
-    pages[0].save(path, "PDF", resolution=150.0, save_all=True, append_images=pages[1:])
+
+    # Keep the existing PDF output format and quality.
+    pages[0].save(
+        path,
+        "PDF",
+        resolution=150.0,
+        save_all=True,
+        append_images=pages[1:],
+    )
+
     return path
