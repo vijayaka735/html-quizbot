@@ -52,20 +52,20 @@ body.dark .error{color:#ff8f9d}
   #exam{padding-right:320px}
   #exam .wrap{max-width:980px;margin:0 auto;padding-left:16px;padding-right:16px}
   #exam .bottom{padding-right:calc(320px + max(16px,calc((100% - 980px)/2 + 16px)))}
-  #exam ~ #navOverlay{position:fixed;display:flex!important;inset:0 0 0 auto;width:320px;background:#fff;z-index:20;pointer-events:none}
-  #exam ~ #navOverlay .drawer{position:fixed;top:0;right:0;width:320px;height:100vh;background:#fff;color:#172235;padding:86px 18px 80px;box-shadow:-2px 0 12px #00000012;pointer-events:auto;border-left:1px solid #e1e6ed}
-  #exam ~ #navOverlay .drawer-head{font-size:18px;color:#172235;border-bottom:1px solid #dfe5ed;padding-bottom:16px}
-  #exam ~ #navOverlay .close{display:none}
-  #exam ~ #navOverlay .legend div{color:#172235;background:#f7f9fc;border-color:#e4e9f0;font-size:14px;padding:11px}
-  #exam ~ #navOverlay .numbers{grid-template-columns:repeat(4,1fr);gap:9px}
-  #exam ~ #navOverlay .num{background:#fff;color:#55708f;border:1px solid #dce4ed;padding:10px 4px;font-size:15px}
-  #exam ~ #navOverlay .num.answered{background:#18bd68;color:#fff;border-color:#18bd68}
-  #exam ~ #navOverlay .num.marked{background:#f5b51b;color:#222;border-color:#f5b51b}
-  #exam ~ #navOverlay .num.current{outline:2px solid #6578df;outline-offset:1px}
-  #exam ~ #navOverlay .submit-big{background:#6578df;color:#fff}
+  #exam:not(.hidden) ~ #navOverlay{position:fixed;display:flex!important;inset:0 0 0 auto;width:320px;background:#fff;z-index:20;pointer-events:none}
+  #exam:not(.hidden) ~ #navOverlay .drawer{position:fixed;top:0;right:0;width:320px;height:100vh;background:#fff;color:#172235;padding:86px 18px 80px;box-shadow:-2px 0 12px #00000012;pointer-events:auto;border-left:1px solid #e1e6ed}
+  #exam:not(.hidden) ~ #navOverlay .drawer-head{font-size:18px;color:#172235;border-bottom:1px solid #dfe5ed;padding-bottom:16px}
+  #exam:not(.hidden) ~ #navOverlay .close{display:none}
+  #exam:not(.hidden) ~ #navOverlay .legend div{color:#172235;background:#f7f9fc;border-color:#e4e9f0;font-size:14px;padding:11px}
+  #exam:not(.hidden) ~ #navOverlay .numbers{grid-template-columns:repeat(4,1fr);gap:9px}
+  #exam:not(.hidden) ~ #navOverlay .num{background:#fff;color:#55708f;border:1px solid #dce4ed;padding:10px 4px;font-size:15px}
+  #exam:not(.hidden) ~ #navOverlay .num.answered{background:#18bd68;color:#fff;border-color:#18bd68}
+  #exam:not(.hidden) ~ #navOverlay .num.marked{background:#f5b51b;color:#222;border-color:#f5b51b}
+  #exam:not(.hidden) ~ #navOverlay .num.current{outline:2px solid #6578df;outline-offset:1px}
+  #exam:not(.hidden) ~ #navOverlay .submit-big{background:#6578df;color:#fff}
 }
 @media(max-width:1000px){
-  #exam ~ #navOverlay.hidden{display:none!important}
+  #exam:not(.hidden) ~ #navOverlay.hidden{display:none!important}
 }
 @media(max-width:700px){
   .topbar{padding:10px}.brand{font-size:16px}.timer{min-width:102px;font-size:17px;padding:10px}.icon-btn{width:45px;height:43px}.wrap{padding:12px 10px 120px}.card{padding:17px}.question{font-size:20px}.option{font-size:17px;padding:14px}.bottom{grid-template-columns:1fr 1fr;padding:9px 10px}.stats-grid{grid-template-columns:1fr 1fr}.result-title{font-size:31px}.numbers{grid-template-columns:repeat(4,1fr)}
