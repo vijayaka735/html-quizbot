@@ -681,7 +681,12 @@ def _draw_question(
             + 24,
         )
 
-        # Reference-style light yellow/cream solution box.
+        # Reference-style light cream/yellow solution box.
+        SOLUTION_BG = "#FFF9E8"
+        SOLUTION_BORDER = "#C9B77E"
+        SOLUTION_TEXT = "#4A4028"
+        SOLUTION_TITLE = "#25211A"
+
         draw.rounded_rectangle(
             (
                 x,
@@ -689,9 +694,9 @@ def _draw_question(
                 x + width,
                 y + box_h,
             ),
-            radius=6,
-            fill="#FFF8E1",
-            outline="#C9B77E",
+            radius=9,
+            fill=SOLUTION_BG,
+            outline=SOLUTION_BORDER,
             width=2,
         )
 
@@ -703,7 +708,7 @@ def _draw_question(
                 (x + 13, ty),
                 line,
                 esize,
-                "#4A4028" if line_no else "#2F2A1F",
+                SOLUTION_TITLE if line_no == 0 else SOLUTION_TEXT,
                 bool(line_no == 0),
             )
             ty += _line_height(esize)
@@ -730,6 +735,19 @@ def _new_page(
     heading,
     page_no,
 ):
+    """
+    Create a PDF page.
+
+    Page 1:
+      - Uses a reference-style title card.
+      - QUICK STUDY GROUP is the main maroon heading.
+      - Quiz title is shown as "MOCK TEST - ..." in dark text.
+      - Quiz heading is shown below it.
+      - The card uses a light lavender background with a maroon border.
+
+    Other pages:
+      - Keep a compact header so more questions fit on the page.
+    """
     im = Image.new(
         "RGB",
         (PAGE_W, PAGE_H),
@@ -738,89 +756,188 @@ def _new_page(
 
     d = ImageDraw.Draw(im)
 
-    # Subtle red watermark first, so all real content remains readable above it.
-    layer = Image.new("RGBA", (PAGE_W, PAGE_H), (255, 255, 255, 0))
+    # ------------------------------------------------------------------
+    # Very light watermark in the background.
+    # ------------------------------------------------------------------
+    layer = Image.new(
+        "RGBA",
+        (PAGE_W, PAGE_H),
+        (255, 255, 255, 0),
+    )
     ld = ImageDraw.Draw(layer)
+
     wm_font = _font(64, True, False)
     wm = "QUICK QUIZ BOT"
     bbox = ld.textbbox((0, 0), wm, font=wm_font)
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
+
     ld.text(
-        ((PAGE_W - tw) / 2, (PAGE_H - th) / 2),
+        (
+            (PAGE_W - tw) / 2,
+            (PAGE_H - th) / 2,
+        ),
         wm,
         font=wm_font,
-        fill=(180, 30, 45, 24),
+        fill=(125, 21, 36, 18),
     )
-    layer = layer.rotate(32, resample=Image.Resampling.BICUBIC, expand=False)
-    im = Image.alpha_composite(im.convert("RGBA"), layer).convert("RGB")
+
+    layer = layer.rotate(
+        32,
+        resample=Image.Resampling.BICUBIC,
+        expand=False,
+    )
+
+    im = Image.alpha_composite(
+        im.convert("RGBA"),
+        layer,
+    ).convert("RGB")
+
     d = ImageDraw.Draw(im)
 
-    _draw_mixed(
-        d,
-        (MARGIN_X, 34),
-        GROUP_NAME,
-        22,
-        "#7D1524",
-        True,
-    )
-
-    date_text = datetime.now().strftime("GENERATED: %d-%b-%Y").upper()
-    date_width = _measure_mixed(d, date_text, 14, False)
-    _draw_mixed(
-        d,
-        (PAGE_W - MARGIN_X - date_width, 38),
-        date_text,
-        14,
-        "#666666",
-        False,
-    )
-
-    d.line(
-        (
-            MARGIN_X,
-            80,
-            PAGE_W - MARGIN_X,
-            80,
-        ),
-        fill="#8B1E2D",
-        width=2,
-    )
-
+    # ------------------------------------------------------------------
+    # PAGE 1 — reference-style title box
+    # ------------------------------------------------------------------
     if page_no == 1:
+        card_x = MARGIN_X + 120
+        card_w = PAGE_W - (2 * card_x)
+        card_y = 52
+        card_h = 196
+
+        MAROON = "#7D1524"
+        DARK = "#202020"
+        CARD_BG = "#E9E8FF"
+        CARD_BORDER = "#B33A4A"
+
+        # Outer card.
+        d.rounded_rectangle(
+            (
+                card_x,
+                card_y,
+                card_x + card_w,
+                card_y + card_h,
+            ),
+            radius=22,
+            fill=CARD_BG,
+            outline=CARD_BORDER,
+            width=4,
+        )
+
+        # QUICK STUDY GROUP
+        group_y = card_y + 25
         _draw_centered(
             d,
             GROUP_NAME,
             PAGE_W // 2,
-            115,
-            29,
-            "#7D1524",
+            group_y,
+            34,
+            MAROON,
             True,
         )
 
-        subject = _hindi_text(heading) or ""
-        if subject:
-            _draw_centered(
-                d,
-                subject,
-                PAGE_W // 2,
-                160,
-                18,
-                "#333333",
-                True,
-            )
+        # Main test title.
+        test_title = _clean_text(
+            title,
+            keep_latin=True,
+        ).strip()
+
+        if not test_title:
+            test_title = "Mock Test - 01"
+
+        # If title is already prefixed, don't add MOCK TEST twice.
+        title_lower = test_title.lower()
+        if "mock test" not in title_lower:
+            test_title = f"Mock Test - {test_title}"
 
         _draw_centered(
             d,
-            _hindi_text(title) or "अभ्यास प्रश्नपत्र",
+            test_title,
             PAGE_W // 2,
-            187,
-            18,
-            "#333333",
+            card_y + 91,
+            26,
+            DARK,
             True,
         )
 
-        return im, TOP_Y + 110
+        # Subject / exam heading.
+        subject = _clean_text(
+            heading,
+            keep_latin=True,
+        ).strip()
+
+        if not subject:
+            subject = "Bihar पुलिस/दरोगा Practice Test"
+
+        _draw_centered(
+            d,
+            subject,
+            PAGE_W // 2,
+            card_y + 139,
+            22,
+            DARK,
+            True,
+        )
+
+        # Small accent line under the title card.
+        d.line(
+            (
+                MARGIN_X,
+                card_y + card_h + 22,
+                PAGE_W - MARGIN_X,
+                card_y + card_h + 22,
+            ),
+            fill="#B33A4A",
+            width=2,
+        )
+
+        # First question area starts below the title card.
+        return im, card_y + card_h + 48
+
+    # ------------------------------------------------------------------
+    # OTHER PAGES — compact header
+    # ------------------------------------------------------------------
+    d.line(
+        (
+            MARGIN_X,
+            58,
+            PAGE_W - MARGIN_X,
+            58,
+        ),
+        fill="#7D1524",
+        width=2,
+    )
+
+    _draw_mixed(
+        d,
+        (MARGIN_X, 25),
+        GROUP_NAME,
+        20,
+        "#7D1524",
+        True,
+    )
+
+    date_text = datetime.now().strftime(
+        "GENERATED: %d-%b-%Y"
+    ).upper()
+
+    date_width = _measure_mixed(
+        d,
+        date_text,
+        13,
+        False,
+    )
+
+    _draw_mixed(
+        d,
+        (
+            PAGE_W - MARGIN_X - date_width,
+            29,
+        ),
+        date_text,
+        13,
+        "#666666",
+        False,
+    )
 
     return im, TOP_Y
 
